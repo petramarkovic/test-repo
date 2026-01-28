@@ -1,0 +1,108 @@
+name: Auto Release on Feature Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  create-release:
+    # Only run if PR was merged (not just closed) and came from a feature branch
+    if: |
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'feature/')
+    
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for tag detection
+      
+      - name: Get latest tag
+        id: get_latest_tag
+        run: |
+          # Get the latest tag, or use v0.0.0 if no tags exist
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Latest tag: $LATEST_TAG"
+      
+      - name: Calculate next version
+        id: next_version
+        run: |
+          LATEST_TAG="${{ steps.get_latest_tag.outputs.latest_tag }}"
+          
+          # Remove 'v' prefix if present
+          VERSION=${LATEST_TAG#v}
+          
+          # Split version into parts
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          # Increment minor version for feature releases
+          MINOR=$((MINOR + 1))
+          PATCH=0
+          
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Next version: $NEW_VERSION"
+      
+      - name: Create Release
+        uses: actions/github-script@v7
+        env:
+          NEW_VERSION: ${{ steps.next_version.outputs.new_version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        with:
+          script: |
+            const newVersion = process.env.NEW_VERSION;
+            const prNumber = process.env.PR_NUMBER;
+            const prTitle = process.env.PR_TITLE;
+            const prBranch = process.env.PR_BRANCH;
+            
+            // Create a new tag
+            const tagResponse = await github.rest.git.createTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: newVersion,
+              message: `Release ${newVersion}`,
+              object: context.sha,
+              type: 'commit'
+            });
+            
+            // Create a reference for the tag
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/tags/${newVersion}`,
+              sha: tagResponse.data.sha
+            });
+            
+            console.log(`Created tag: ${newVersion}`);
+            
+            // Create the release with auto-generated notes
+            const release = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: newVersion,
+              name: `Release ${newVersion}`,
+              body: `## 🎉 Feature Release\n\nThis release includes changes from PR #${prNumber}: ${prTitle}\n\nBranch: \`${prBranch}\`\n\n---\n\n**Full Changelog**: https://github.com/${context.repo.owner}/${context.repo.repo}/compare/${newVersion}...${newVersion}`,
+              draft: false,
+              prerelease: false,
+              generate_release_notes: true  // This uses your release.yml config
+            });
+            
+            console.log(`Created release: ${release.data.html_url}`);
+            
+            // Comment on the PR
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `🚀 Release [${newVersion}](${release.data.html_url}) has been automatically created for this feature!`
+            });

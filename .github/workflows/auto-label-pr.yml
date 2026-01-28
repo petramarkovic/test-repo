@@ -1,0 +1,56 @@
+name: Auto Label PRs
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  label-feature-prs:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    
+    steps:
+      - name: Label PRs from feature branches
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const headRef = context.payload.pull_request.head.ref;
+            
+            // Check if branch starts with 'feature/'
+            if (headRef.startsWith('feature/')) {
+              // Add 'feature' label
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['feature']
+              });
+              
+              console.log(`Added 'feature' label to PR #${prNumber} from branch: ${headRef}`);
+            }
+            
+            // Optional: Add labels for other branch patterns
+            if (headRef.startsWith('bugfix/') || headRef.startsWith('fix/')) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['bug']
+              });
+              
+              console.log(`Added 'bug' label to PR #${prNumber} from branch: ${headRef}`);
+            }
+            
+            if (headRef.startsWith('docs/')) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['documentation']
+              });
+              
+              console.log(`Added 'documentation' label to PR #${prNumber} from branch: ${headRef}`);
+            }
